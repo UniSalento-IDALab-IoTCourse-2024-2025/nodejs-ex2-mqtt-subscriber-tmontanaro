@@ -1,13 +1,10 @@
 var express = require("express");
-const { MongoClient } = require('mongodb');
 var app = express();
 const WebSocket = require('ws');
 const path = require('path');
+const mqtt=require('mqtt');
 
 
-const url = 'mongodb://localhost:27017';
-const client = new MongoClient(url);
-const dbName = 'TemperatureDB';
 
 app.listen(3000, () => {
     console.log("Server running on port 3000");
@@ -29,25 +26,13 @@ wss.on('connection', function connection(ws) {
     ws.send('something');
 });
 
-//asynchronous method to be executed to write info in the DB
-async function writeToDb(temperature, timestamp, sensor) {
-    // Use connect method to connect to the server
-    await client.connect();
-    console.log('Connected successfully to server');
-    const db = client.db(dbName);
-    const collection = db.collection('TemperatureDB');
-    const doc = {
-        value: temperature,
-        timestamp: timestamp,
-        sensorId: sensor,
-        roomId: 'room1'
-    };
-
-    // insert the info in the database
-    const insertResult = await collection.insertMany([doc]);
-    console.log('Inserted documents =>', insertResult);
-    return 'done.';
-}
+var mqttClient = mqtt.connect("mqtt://mqtt.eclipseprojects.io",{clientId:"mqttjs041"});
+mqttClient.on("connect",function(){
+    console.log("connected");
+});
+mqttClient.on("error",function(error){
+    console.log("Can't connect"+error);
+});
 
 async function pushToWsClient(temperature){
     wss.clients.forEach(function each(client) {
@@ -57,46 +42,24 @@ async function pushToWsClient(temperature){
     });
 }
 
-app.post("/temperature", (req, res, next) => {
-    var temperature = req.body.temperature;
-    var timestamp = req.body.timestamp;
-    var sensor = req.body.sensor;
-    pushToWsClient(temperature).catch();
-
-    writeToDb(temperature, timestamp, sensor)
-        .then(console.log)
-        .catch(console.error)
-        .finally(() => client.close());
-    res.sendStatus(200);
-
+mqttClient.on('message',function(topic, message, packet){
+    console.log("message is "+ message);
+    console.log("topic is "+ topic);
+    var messageJSON = JSON.parse(message);
+    var temperature = messageJSON.temperature;
+    var timestamp = messageJSON.timestamp;
+    var sensor = messageJSON.sensor;
+	pushToWsClient(temperature).catch();
 });
 
-//asynchronous method to be executed to write info in the DB
-async function getLastTemperatureFromDB() {
-    // Use connect method to connect to the server
-    await client.connect();
-    console.log('Connected successfully to server');
-    const db = client.db(dbName);
-    const collection = db.collection('TemperatureDB');
-    const query = { timestamp: {$gt: 0}};
-    const options = {
-        // sort matched documents in descending order by timestamp
-        sort: { timestamp: -1 },
-    };
-
-    //get all the documents that respect the query
-    const filteredDocs = await collection.find(query, options).toArray();
-    //get the first document that respect the query
-    const filteredDoc = await collection.findOne(query, options);
-    console.log('Found documents filtered by timestamp: {$gt: 0} =>', filteredDoc);
-
-    return JSON.parse(JSON.stringify(filteredDoc));
-}
-
-
+	
 app.get('/dashboard', async (req, res) => {
     res.sendFile(path.join(__dirname + '/index.html'));
 })
+
+var topic="test-topic-handson/data";
+console.log("subscribing to topic"+topic);
+mqttClient.subscribe(topic); //single topic
 
 
 
